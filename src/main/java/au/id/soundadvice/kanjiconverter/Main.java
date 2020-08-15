@@ -31,6 +31,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.StreamSupport;
@@ -52,7 +53,8 @@ public class Main {
             Map<String, Integer> header = parser.getHeaderMap();
             StreamSupport.stream(parser.spliterator(), false)
                     .map(it -> JoyoWikipedia.fromCSV(header, it))
-                    .map(CoreModel::fromWikipedia)
+                    .flatMap(CoreModel::fromWikipedia)
+                    .sorted()
                     .map(CoreModel::toCSVRow)
                     .forEach(it -> print(printer, it));
         }

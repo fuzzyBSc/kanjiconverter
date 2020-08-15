@@ -19,15 +19,12 @@
 
 package au.id.soundadvice.kanjiconverter;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
+import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-public class CoreModel {
+public class CoreModel implements Comparable<CoreModel> {
     public final int joyoNumber;
     public final String kanji;
     public final String radical;
@@ -46,19 +43,41 @@ public class CoreModel {
         this.kunyomi = kunyomi;
     }
 
-    public static CoreModel fromWikipedia(JoyoWikipedia wikipedia) {
+    public static Stream<CoreModel> fromWikipedia(JoyoWikipedia wikipedia) {
         List<String> onyomi = extractReading(wikipedia.readings, Character.UnicodeBlock.KATAKANA)
                 .collect(Collectors.toList());
         List<String> kunyomi = extractReading(wikipedia.readings, Character.UnicodeBlock.HIRAGANA)
+                .filter(it -> !it.contains("-")) // Exclude Okurigana readings
                 .collect(Collectors.toList());
-        return new CoreModel(
+        Stream<CoreModel> mainResult = Stream.of(new CoreModel(
                 wikipedia.joyoNumber,
                 wikipedia.kanji,
                 wikipedia.radical,
                 wikipedia.strokes,
                 wikipedia.grade,
-                onyomi, kunyomi
-        );
+                onyomi, kunyomi))
+                .filter(it -> !it.onyomi.isEmpty() || !it.kunyomi.isEmpty());
+        Map<String, List<CoreModel>> okuriganaWithDuplicates = extractReading(wikipedia.readings, Character.UnicodeBlock.HIRAGANA)
+                .filter(it -> it.contains("-"))
+                .map(it -> coreModelForOkurigana(wikipedia, it))
+                .collect(Collectors.groupingBy(it -> it.kanji));
+        Stream<CoreModel> okurigana = okuriganaWithDuplicates.entrySet().stream()
+                .map(it -> combineSameOkurigana(wikipedia, it.getKey(), it.getValue()));
+        return Stream.concat(mainResult, okurigana);
+    }
+
+    private static CoreModel combineSameOkurigana(JoyoWikipedia wikipedia, String kanji, List<CoreModel> okurigana) {
+        return new CoreModel(
+                wikipedia.joyoNumber,
+                kanji,
+                wikipedia.radical,
+                wikipedia.strokes,
+                wikipedia.grade,
+                Collections.emptyList(),
+                okurigana.stream()
+                        .map(it -> it.kunyomi)
+                        .flatMap(Collection::stream)
+                        .collect(Collectors.toList()));
     }
 
     private static final Pattern separator = Pattern.compile("[,，、 \\u00A0\\s]+");
@@ -66,17 +85,23 @@ public class CoreModel {
     private static Stream<String> extractReading(String readings, Character.UnicodeBlock match) {
         return separator.splitAsStream(readings)
                 .filter(it -> contains(it, match))
-                .map(CoreModel::removeOkurigana)
                 .distinct();
     }
 
-    private static String removeOkurigana(String string) {
+    private static CoreModel coreModelForOkurigana(JoyoWikipedia wikipedia, String string) {
         int dashPos = string.indexOf('-');
-        if (dashPos >= 0) {
-            return string.substring(0, dashPos);
-        } else {
-            return string;
+        if (dashPos < 0) {
+            throw new IllegalArgumentException("Expected okurigana");
         }
+        String prefix = string.substring(0, dashPos);
+        String suffix = string.substring(dashPos + 1);
+        return new CoreModel(
+                wikipedia.joyoNumber,
+                wikipedia.kanji + suffix,
+                wikipedia.radical,
+                wikipedia.strokes,
+                wikipedia.grade,
+                Collections.emptyList(), Collections.singletonList(prefix + suffix));
     }
 
     private static boolean contains(String string, Character.UnicodeBlock match) {
@@ -91,7 +116,7 @@ public class CoreModel {
     }
 
     public static List<String> getCSVHeader() {
-        return Arrays.asList("#", "Kanji", "Onyomi", "Kunyomi", "Tags");
+        return Arrays.asList("Kanji", "#", "Onyomi", "Kunyomi", "Tags");
     }
 
     public List<String> toCSVRow() {
@@ -100,8 +125,8 @@ public class CoreModel {
         tags.put("radical", radical);
         tags.put("strokes", Integer.toString(strokes));
         return Arrays.asList(
-                Integer.toString(joyoNumber),
                 kanji,
+                Integer.toString(joyoNumber),
                 readingToString(onyomi),
                 readingToString(kunyomi),
                 tags.entrySet().stream()
@@ -111,5 +136,14 @@ public class CoreModel {
 
     private String readingToString(List<String> reading) {
         return String.join(", ", reading);
+    }
+
+    @Override
+    public int compareTo(CoreModel other) {
+        int result = grade.compareTo(other.grade);
+        if (result != 0) {
+            return result;
+        }
+        return kanji.compareTo(other.kanji);
     }
 }
